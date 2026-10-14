@@ -1,0 +1,18 @@
+{
+  "name": "omni-vend",
+  "version": "2.0.0",
+  "description": "Token Balance Terminal with Arduino serial link for RFID vending",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "express": "^4.21.0",
+    "serialport": "^12.0.0",
+    "sql.js": "^1.11.0"
+  },
+  "allowScripts": {
+    "@serialport/bindings-cpp@12.0.1": true
+  }
+}

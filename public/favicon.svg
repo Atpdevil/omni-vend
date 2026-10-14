@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <rect width="32" height="32" rx="4" fill="#0e0e0e"/>
+  <rect x="6" y="8" width="20" height="16" rx="2" fill="#1a2e0a" stroke="#2a4a12" stroke-width="1.5"/>
+  <text x="16" y="19" font-family="monospace" font-size="8" fill="#7ecc2a" text-anchor="middle" dominant-baseline="central">OV</text>
+</svg>

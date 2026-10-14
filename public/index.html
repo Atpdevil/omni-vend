@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OmniVend - Token Balance Terminal</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+  <!-- Screen 1: Entry -->
+  <section id="screen-entry" class="screen active">
+    <div class="container">
+      <h1>Token Balance Terminal</h1>
+      <p class="subtitle">RFID card management system</p>
+      <div class="form-group">
+        <label for="card-input">Card UID</label>
+        <input
+          type="text"
+          id="card-input"
+          placeholder="e.g. 3E300002"
+          maxlength="16"
+          spellcheck="false"
+          autocomplete="off"
+        >
+      </div>
+      <button id="btn-load" class="btn-primary">Load card</button>
+      <p id="entry-error" class="error-text"></p>
+    </div>
+  </section>
+
+  <!-- Screen 2: Dashboard -->
+  <section id="screen-dashboard" class="screen">
+    <div class="container">
+      <button id="btn-back-entry" class="btn-link">&larr; Back</button>
+      <div class="card-info">
+        <span class="label">Card</span>
+        <span id="dash-card-id" class="value mono">--</span>
+      </div>
+      <div class="card-info balance-box">
+        <span class="label">Balance</span>
+        <span id="dash-balance" class="value mono">Rs. --</span>
+      </div>
+
+      <div class="form-group inline">
+        <input
+          type="number"
+          id="recharge-amount"
+          placeholder="Amount"
+          min="1"
+        >
+        <button id="btn-recharge" class="btn-primary">Recharge</button>
+      </div>
+      <p id="recharge-error" class="error-text"></p>
+
+      <button id="btn-log" class="btn-secondary">View live tap log</button>
+    </div>
+  </section>
+
+  <!-- Screen 3: Live log -->
+  <section id="screen-log" class="screen">
+    <div class="container container-wide">
+      <button id="btn-back-dash" class="btn-link">&larr; Back to dashboard</button>
+      <h2>Live Tap Log</h2>
+      <p class="subtitle">Auto-refreshes every 2 seconds from the Arduino reader</p>
+      <div class="table-wrap">
+        <table id="log-table">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Card</th>
+              <th>Result</th>
+              <th>Balance</th>
+            </tr>
+          </thead>
+          <tbody id="log-body">
+            <tr><td colspan="4" class="empty-row">No taps recorded yet</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <script src="/app.js"></script>
+</body>
+</html>
