@@ -14,6 +14,10 @@ const PORT = 3000;
 const SERIAL_PORT = process.env.SERIAL_PORT || 'COM5';
 const BAUD_RATE = parseInt(process.env.BAUD_RATE, 10) || 9600;
 
+// Which keypad item numbers actually have a motor fitted right now.
+// Only "1" is real; add more here as slots are built.
+const AVAILABLE_ITEMS = { '1': ITEM_PRICE };
+
 // ── Seed cards ──────────────────────────────────────────────────────
 const SEED_CARDS = ['3E300002', 'C1971307', 'D2A10202', '0E810202', 'EB940102'];
 
@@ -69,27 +73,58 @@ function getTransactions(db, limit) {
   return rows;
 }
 
-// ── Process a tap (used by both serial and API) ─────────────────────
-function processTap(db, uid) {
+// ── STEP 1: check a tapped card - NO deduction here ──────────────────
+// This matches the Arduino's "TAP:<uid>" message. It only looks up
+// whether the card exists and what its current balance is. It does
+// NOT touch the balance - that only happens in dispenseItem() below,
+// once the customer has actually picked an item.
+function checkCard(db, uid) {
   const cardId = uid.toUpperCase();
-  ensureCard(db, cardId);
   const row = getCard(db, cardId);
 
-  if (row.balance >= ITEM_PRICE) {
-    db.run(
-      'UPDATE cards SET balance = balance - ? WHERE card_id = ? AND balance >= ?',
-      [ITEM_PRICE, cardId, ITEM_PRICE]
-    );
-    save();
-    const updated = getCard(db, cardId);
-    logTransaction(db, cardId, 'GRANTED', updated.balance);
-    console.log('[TAP] %s  GRANTED  bal=%d', cardId, updated.balance);
-    return { status: 'granted', balance: updated.balance };
+  if (!row) {
+    logTransaction(db, cardId, 'INVALID', 0);
+    console.log('[TAP] %s  INVALID  (not registered)', cardId);
+    return { status: 'invalid' };
   }
 
-  logTransaction(db, cardId, 'DENIED', row.balance);
-  console.log('[TAP] %s  DENIED   bal=%d', cardId, row.balance);
-  return { status: 'low_balance', balance: row.balance };
+  console.log('[TAP] %s  OK       bal=%d', cardId, row.balance);
+  return { status: 'ok', balance: row.balance };
+}
+
+// ── STEP 2: item selected - THIS is where balance actually changes ───
+// Matches the Arduino's "SELECT:<uid>:<item>" message, sent only
+// after the customer presses a key on the keypad.
+function dispenseItem(db, uid, item) {
+  const cardId = uid.toUpperCase();
+  const row = getCard(db, cardId);
+
+  if (!row) {
+    console.log('[SELECT] %s  INVALID  (not registered)', cardId);
+    return { status: 'invalid' };
+  }
+
+  const price = AVAILABLE_ITEMS[item];
+  if (price === undefined) {
+    console.log('[SELECT] %s  UNAVAILABLE  item=%s', cardId, item);
+    return { status: 'unavailable' };
+  }
+
+  if (row.balance < price) {
+    logTransaction(db, cardId, 'LOW_BALANCE', row.balance);
+    console.log('[SELECT] %s  LOW_BALANCE  bal=%d', cardId, row.balance);
+    return { status: 'low_balance', balance: row.balance };
+  }
+
+  db.run(
+    'UPDATE cards SET balance = balance - ? WHERE card_id = ? AND balance >= ?',
+    [price, cardId, price]
+  );
+  save();
+  const updated = getCard(db, cardId);
+  logTransaction(db, cardId, 'DISPENSED', updated.balance);
+  console.log('[SELECT] %s  DISPENSED  bal=%d', cardId, updated.balance);
+  return { status: 'dispensed', balance: updated.balance };
 }
 
 // ── Serial port ─────────────────────────────────────────────────────
@@ -125,17 +160,39 @@ async function openSerial(db) {
 
   parser.on('data', (line) => {
     const trimmed = line.trim();
-    if (!trimmed.startsWith('TAP:')) return;
 
-    const uid = trimmed.substring(4).trim();
-    if (!uid) return;
+    // Step 1: card tapped - just report status + balance, no deduction
+    if (trimmed.startsWith('TAP:')) {
+      const uid = trimmed.substring(4).trim();
+      if (!uid) return;
 
-    const result = processTap(db, uid);
+      const result = checkCard(db, uid);
+      if (result.status === 'invalid') {
+        port.write('INVALID\n');
+      } else {
+        port.write('OK:' + result.balance + '\n');
+      }
+      return;
+    }
 
-    if (result.status === 'granted') {
-      port.write('GRANTED:' + result.balance + '\n');
-    } else {
-      port.write('DENIED:' + result.balance + '\n');
+    // Step 2: item selected - this is where the real deduction happens
+    if (trimmed.startsWith('SELECT:')) {
+      const parts = trimmed.split(':'); // ['SELECT', uid, item]
+      const uid = parts[1] ? parts[1].trim() : '';
+      const item = parts[2] ? parts[2].trim() : '';
+      if (!uid) return;
+
+      const result = dispenseItem(db, uid, item);
+
+      if (result.status === 'invalid') {
+        port.write('INVALID\n');
+      } else if (result.status === 'unavailable') {
+        port.write('UNAVAILABLE\n');
+      } else if (result.status === 'low_balance') {
+        port.write('LOWBAL:' + result.balance + '\n');
+      } else {
+        port.write('DISPENSED:' + result.balance + '\n');
+      }
     }
   });
 }
@@ -145,7 +202,7 @@ const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
-// GET /api/card/:id
+// GET /api/card/:id - website lookup, still auto-creates for convenience
 app.get('/api/card/:id', async (req, res) => {
   const db = await getDb();
   const row = ensureCard(db, req.params.id.toUpperCase());
@@ -170,11 +227,23 @@ app.post('/api/card/:id/recharge', async (req, res) => {
   res.json({ card_id: row.card_id, balance: row.balance });
 });
 
-// POST /api/card/:id/tap
-app.post('/api/card/:id/tap', async (req, res) => {
+// POST /api/card/:id/order - website "buy an item" button.
+// Mirrors the Arduino's SELECT step: real deduction happens here.
+app.post('/api/card/:id/order', async (req, res) => {
   const db = await getDb();
-  const result = processTap(db, req.params.id);
-  res.json(result);
+  const cardId = req.params.id.toUpperCase();
+  const item = req.body.item || '1';
+
+  ensureCard(db, cardId); // website orders are allowed to auto-register
+  const result = dispenseItem(db, cardId, item);
+
+  if (result.status === 'unavailable') {
+    return res.status(400).json({ error: 'Item slot not available' });
+  }
+  if (result.status === 'low_balance') {
+    return res.status(400).json({ error: 'Low balance', balance: result.balance });
+  }
+  res.json({ status: 'dispensed', balance: result.balance });
 });
 
 // GET /api/transactions
